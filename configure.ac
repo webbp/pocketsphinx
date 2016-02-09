@@ -142,6 +142,9 @@ else
    SPHINXBASE_SWIG="$sphinxbase/swig"
 fi
 
+LIBS="$LIBS -lsamplerate"
+LDFLAGS="$LDFLAGS -L/Users/webb/src/libsamplerate-0.1.8/src"
+
 AC_SUBST(SPHINXBASE_SWIG)
 
 AC_OUTPUT([

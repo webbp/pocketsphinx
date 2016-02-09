@@ -64,6 +64,11 @@
 #include "ngram_search_fwdflat.h"
 #include "allphone_search.h"
 
+#include <samplerate.h>
+
+#define DEFAULT_CONVERTER SRC_SINC_MEDIUM_QUALITY
+#define PS_SAMPLE_RATE 16000
+
 static const arg_t ps_args_def[] = {
     POCKETSPHINX_OPTIONS,
     CMDLN_EMPTY_OPTION
@@ -1481,4 +1486,122 @@ void
 ps_get_rawdata(ps_decoder_t *ps, int16 **buffer, int32 *size)
 {
     acmod_get_rawdata(ps->acmod, buffer, size);
+}
+
+float webbadd(float x, float y)
+{
+	return x + y;
+}
+
+static ps_decoder_t *ps;
+static cmd_ln_t *config;
+int n_nbest = 0; //default 0 additional hypotheses
+
+
+int sample_rate_convert(float data_in[], int input_frames, double src_ratio, float data_out[], int output_frames){
+	SRC_DATA src_data;
+	src_data.data_in = data_in;
+	src_data.input_frames = input_frames;
+	src_data.src_ratio = src_ratio;
+	src_data.data_out = data_out;
+	src_data.output_frames = output_frames;
+	src_simple (&src_data, DEFAULT_CONVERTER, 1);
+	return (int)src_data.output_frames_gen;
+}
+
+
+int wav2str(const char* phrase, char* buf, int maxchars, float scores[], int maxscores, int n_nbest, const char* hmm, const char* dict, const char* gram, float data[], int n_samples, const char* hz){
+	char *hyp;
+	int32 score;
+	int nchars=0;
+	FILE *gramfile;
+	int sample_rate = atoi(hz);
+	int16 *idata;
+	float *tmpdata;
+	int i = 0;
+
+	E_INFO("SR wav2str");
+
+	if(n_nbest<=0) return 1;
+
+	if(sample_rate != PS_SAMPLE_RATE){
+		double src_ratio = (double)PS_SAMPLE_RATE/(double)sample_rate;
+		int output_frames = (int)((double)n_samples * src_ratio);
+		tmpdata = malloc(sizeof(float)*output_frames);
+		n_samples = sample_rate_convert(data, n_samples, src_ratio, tmpdata, output_frames);
+		data = tmpdata;
+	}
+
+	idata = malloc(sizeof(int16)*n_samples);
+	for(i=0; i<n_samples; i++){
+		idata[i] = (int)(32767.0 * data[i]);
+	}
+
+	gramfile = fopen(gram, "w");
+	fprintf(gramfile, "#JSGF V1.0;\ngrammar s;\npublic <s> = %s ;\n", phrase);
+	fclose(gramfile);
+
+	config = cmd_ln_init(NULL, ps_args(), TRUE,
+			"-hmm", hmm, // 6.4 MB
+			"-dict", dict,
+			"-jsgf", gram,
+			//"-lm", "/Users/webb/Kidaptive/ogma/Ogma/Assets/SR/en-us.lm.dmp", //~24 MB //gram and lm are mutually exclusive
+			//"-samprate", hz, // default is already 16000
+			NULL);
+	if (config == NULL) return 1;
+	ps_default_search_args(config);
+	ps = ps_init(config);
+	if (ps == NULL) return 1;
+
+	ps_start_utt(ps);
+	ps_process_raw(ps, idata, n_samples, FALSE, FALSE);
+	ps_end_utt(ps);
+
+	hyp = (char*)ps_get_hyp(ps, &score);
+	if (hyp == NULL) return 1;
+//	strncpy(buf, hyp, maxchars);
+
+	// return best phrase and confidence
+
+	// for later conversion of logmath to float
+	logmath_t *lmath = ps_get_logmath(ps);
+
+	//scores[0] = logmath_exp(lmath, score);
+	nchars += snprintf(buf, maxchars, "%s", hyp);
+//int nchars = 0;
+//	nchars += snprintf(buf, maxchars-nchars, "%s,%0.5f", hyp, score);
+
+	// return words and confidence for each
+	ps_seg_t *iter = ps_seg_iter(ps);
+	while (iter != NULL && i < maxscores && nchars < maxchars) {
+		ps_seg_frames(iter, NULL, NULL);
+		ps_seg_prob(iter, &score, NULL, NULL);
+		nchars += snprintf(buf+nchars, maxchars-nchars, "\n%s", ps_seg_word(iter));
+		i++;
+		scores[i] = logmath_exp(lmath, score);
+		scores[0] += scores[i];
+		iter = ps_seg_next(iter);
+	}
+	scores[0] /= (float)i;
+
+	/*
+		 if(n_nbest>1){
+		 ps_nbest_t *nbest;
+		 nbest = ps_nbest(ps, 0, -1, NULL, NULL);
+		 if(nbest==NULL) return 1;
+
+		 int nchars = 0;
+		 for(int i=0;i<n_nbest;i++){
+		 float conf;
+		 nbest = ps_nbest_next(nbest);
+		 if(nbest==NULL) break;
+		 hyp = ps_nbest_hyp(nbest, &score);
+		 if (hyp == NULL) break;
+		 conf = logmath_exp(lmath, score);
+		 */
+
+	// maybe shouldn't do this since prog is ending...
+	ps_free(ps);
+	cmd_ln_free_r(config);
+	return 0;
 }

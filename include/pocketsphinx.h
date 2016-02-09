@@ -645,6 +645,10 @@ void ps_get_rawdata(ps_decoder_t *ps, int16 **buffer, int32 *size);
  * <pocketsphinx.h>.
  */
 
+float webbadd(float x, float y);
+
+int wav2str(const char* phrase, char* buf, int maxchars, float scores[], int maxscores, int n_nbest, const char* hmm, const char* dict, const char* gram, float data[], int n_samples, const char* hz);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif
